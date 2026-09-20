@@ -675,7 +675,7 @@ export function StrategySettingsDialog({ strategyId, onClose, onSaved, onAiModif
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-            className="w-[380px] bg-surface border border-border/50 rounded-2xl shadow-2xl p-6"
+            className="w-[380px] max-w-[92vw] bg-surface border border-border/50 rounded-2xl shadow-2xl p-6"
             onClick={e => e.stopPropagation()}
           >
             <div className="text-center space-y-3">
