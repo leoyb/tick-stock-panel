@@ -52,17 +52,17 @@ const codexModelLabel = (model?: string, effort?: string) => {
   return effortLabel ? `${modelLabel} · ${effortLabel}` : modelLabel
 }
 
-type AiPreset = { label: string; provider?: string; url: string; model: string; codexCommand?: string; website: string; websiteLabel: string; description: string; custom?: boolean }
+type AiPreset = { label: string; provider?: string; url: string; model: string; codexCommand?: string; website: string; websiteLabel: string; description: string; custom?: boolean; sponsor?: boolean }
 
 const PRESETS: AiPreset[] = [
   { label: '自定义', url: '', model: '', website: '', websiteLabel: '', description: '不自动填充任何配置，完全手动填写 API 地址、模型和密钥。', custom: true },
+  { label: 'RunningHub', url: 'https://llm.runninghub.ai/v1', model: 'openai/gpt-6-astra-saver', website: 'https://www.runninghub.ai/call-api?source=github', websiteLabel: 'www.runninghub.ai · 赞助', sponsor: true, description: '本项目赞助商 · OpenAI 兼容中转，单一接口直连 400+ 主流大模型。通过下方链接注册即为项目提供赞助支持。' },
   { label: 'OpenAI', provider: OPENAI_PROVIDER, url: 'https://api.openai.com/v1', model: DEFAULT_OPENAI_MODEL, website: 'https://platform.openai.com/', websiteLabel: 'platform.openai.com', description: 'OpenAI 官方接口，可单独配置模型支持的推理强度。' },
   { label: 'DeepSeek', url: 'https://api.deepseek.com', model: 'deepseek-v4-pro', website: 'https://www.deepseek.com/', websiteLabel: 'deepseek.com', description: 'DeepSeek 官方 OpenAI 兼容接口。' },
   { label: '通义千问', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-3.6plus', website: 'https://tongyi.aliyun.com/', websiteLabel: 'tongyi.aliyun.com', description: '阿里云 DashScope 兼容模式接口。' },
   { label: '智谱 GLM', url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-5.2', website: 'https://open.bigmodel.cn/', websiteLabel: 'open.bigmodel.cn', description: '智谱 AI 官方 OpenAI 兼容接口。' },
   { label: 'Kimi', url: 'https://api.moonshot.cn/v1', model: 'kimi-k2.7-code', website: 'https://platform.moonshot.cn/', websiteLabel: 'platform.moonshot.cn', description: '月之暗面 Moonshot 官方 OpenAI 兼容接口，支持超长上下文。' },
   { label: 'Codex CLI', provider: CODEX_PROVIDER, url: '', model: DEFAULT_CODEX_MODEL, codexCommand: CODEX_COMMAND, website: 'https://developers.openai.com/codex/noninteractive', websiteLabel: 'codex exec', description: '调用本机 Codex CLI 的 codex exec, 适合已登录 ChatGPT/Codex 的本地环境。' },
-  { label: '炸鸡中转站', url: 'https://api.zhaji.dev/v1', model: 'gpt-5.5', website: 'https://api.zhaji.dev', websiteLabel: 'api.zhaji.dev', description: 'OpenAI 兼容中转服务，适合直接使用国际模型。' },
 ]
 
 const findPreset = (provider: string, baseUrl: string, codexCommand: string) => PRESETS.find(p => {
@@ -348,6 +348,7 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
               className={`rounded-lg border px-3 py-2 text-left transition-all ${selectedPreset?.label === p.label ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border bg-base text-secondary hover:border-accent/30'}`}>
               <div className="flex items-center gap-1.5 text-xs font-medium">
                 <span>{p.label}</span>
+                {p.sponsor && <span className="rounded-full border border-amber-400/40 bg-amber-400/15 px-1.5 py-px text-[9px] font-semibold leading-none text-amber-400">赞助</span>}
                 {p.provider === CODEX_PROVIDER && <Terminal className="h-3 w-3" />}
               </div>
             </button>
@@ -411,7 +412,7 @@ export function SettingsAIPanel({ highlight }: { highlight?: string } = {}) {
             <>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label="API 地址">
-                  <input type="text" value={baseUrl} onChange={e => handleBaseUrlChange(e.target.value)} placeholder="https://api.zhaji.dev/v1" className={INPUT_CLS} />
+                  <input type="text" value={baseUrl} onChange={e => handleBaseUrlChange(e.target.value)} placeholder="https://llm.runninghub.ai/v1" className={INPUT_CLS} />
                 </Field>
                 <Field label="模型">
                   <input type="text" value={model} onChange={e => handleModelChange(e.target.value)} placeholder="gpt-5.6-sol" className={INPUT_CLS} />
