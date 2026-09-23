@@ -42,10 +42,6 @@ BACKEND_HOST="${HOST:-${ENV_HOST:-0.0.0.0}}"
 # Keep BACKEND_PORT as a backwards-compatible explicit override.
 BACKEND_PORT="${BACKEND_PORT:-${PORT:-${ENV_PORT:-3018}}}"
 FRONTEND_PORT="${FRONTEND_PORT:-3011}"
-UVICORN_ENV_ARGS=()
-if [[ -f "$ROOT/.env" ]]; then
-  UVICORN_ENV_ARGS=(--env-file "$ROOT/.env")
-fi
 DISPLAY_HOST="$BACKEND_HOST"
 if [[ "$DISPLAY_HOST" == "0.0.0.0" || "$DISPLAY_HOST" == "::" ]]; then
   DISPLAY_HOST="localhost"
@@ -77,18 +73,57 @@ ok()    { echo -e "${GREEN}[dev]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[dev]${NC} $*"; }
 err()   { echo -e "${RED}[dev]${NC} $*" >&2; }
 
-# ===== 1. 依赖检查 =====
-require_cmd() {
-  local cmd="$1" hint="$2"
-  if ! command -v "$cmd" >/dev/null 2>&1; then
-    err "$cmd 未安装"
-    echo "       安装方式:$hint"
+# ===== 1. 依赖检查与自动准备 =====
+ensure_uv() {
+  if command -v uv >/dev/null 2>&1; then
+    return 0
+  fi
+
+  info "uv 未安装,尝试自动安装..."
+  if command -v brew >/dev/null 2>&1; then
+    brew install uv
+  else
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  hash -r 2>/dev/null || true
+  if ! command -v uv >/dev/null 2>&1; then
+    err "uv 自动安装后仍不可用,请重新打开终端后再试"
     exit 1
   fi
+  ok "uv 已准备好"
 }
 
-require_cmd uv   "curl -LsSf https://astral.sh/uv/install.sh | sh"
-require_cmd pnpm "npm i -g pnpm   或   corepack enable && corepack prepare pnpm@9 --activate"
+ensure_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    return 0
+  fi
+
+  info "pnpm 未安装,尝试自动启用 Corepack..."
+  if command -v corepack >/dev/null 2>&1; then
+    corepack enable >/dev/null 2>&1 || true
+    corepack prepare pnpm@9.10.0 --activate >/dev/null 2>&1 || true
+    hash -r 2>/dev/null || true
+  fi
+
+  if ! command -v pnpm >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+    info "Corepack 不可用,改用 npm 安装 pnpm..."
+    npm install --global pnpm@9.10.0
+    hash -r 2>/dev/null || true
+  fi
+  if ! command -v pnpm >/dev/null 2>&1; then
+    err "pnpm 自动安装失败,请确认 node/npm 可用后重试"
+    exit 1
+  fi
+  ok "pnpm 已准备好"
+}
+
+ensure_uv
+
+BACKEND_CMD=(uv run --no-sync uvicorn app.main:app)
+if [[ -f "$ROOT/.env" ]]; then
+  BACKEND_CMD+=(--env-file "$ROOT/.env")
+fi
 
 # ===== 2. 端口占用检查 —— 占用就直接 kill =====
 free_port() {
@@ -127,16 +162,28 @@ if [ ! -d "$BACKEND_DIR/.venv" ] || [ "${#BACKEND_EXTRA_ARGS[@]}" -gt 0 ]; then
   else
     info "后端首次启动 — 安装 Python 依赖(约 1-2 分钟)..."
   fi
-  # macOS 自带 bash 3.2 在 set -u 下展开空数组会报 unbound variable,
-  # ${arr[@]+"${arr[@]}"} 守卫:数组为空时展开为零个参数,非空时逐个带引号展开。
-  ( cd "$BACKEND_DIR" && uv sync --frozen ${BACKEND_EXTRA_ARGS[@]+"${BACKEND_EXTRA_ARGS[@]}"} )
+  ( cd "$BACKEND_DIR" && uv sync --frozen "${BACKEND_EXTRA_ARGS[@]}" )
   ok "后端依赖装好了"
 fi
 
-if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
-  info "前端首次启动 — 安装 Node 依赖..."
+if [[ ! -d "$FRONTEND_DIR/node_modules" || ! -f "$FRONTEND_DIR/node_modules/vite/bin/vite.js" ]]; then
+  ensure_pnpm
+  if [[ -d "$FRONTEND_DIR/node_modules" ]]; then
+    info "前端依赖不完整 — 自动补齐 Node 依赖..."
+  else
+    info "前端首次启动 — 安装 Node 依赖..."
+  fi
   ( cd "$FRONTEND_DIR" && pnpm install )
   ok "前端依赖装好了"
+fi
+
+# pnpm 在部分受管控环境中会在每次 `pnpm dev` 前重复触发 install,并因
+# esbuild build-script 策略直接退出。依赖已存在时直接调用 Vite,避免把
+# 开发服务器启动绑定到包管理器的安装钩子;首次安装仍使用上面的 pnpm。
+if [[ -f "$FRONTEND_DIR/node_modules/vite/bin/vite.js" ]]; then
+  FRONTEND_CMD=(node "$FRONTEND_DIR/node_modules/vite/bin/vite.js")
+else
+  FRONTEND_CMD=(pnpm dev)
 fi
 
 # ===== 4. 启动 + 日志前缀 =====
@@ -177,9 +224,7 @@ echo
   cd "$BACKEND_DIR"
   # --no-sync: 跳过依赖解析, 直接用已安装的 .venv。
   # 比 --frozen 更彻底: 不校验 lockfile, 避免镜像源 403/网络抖动导致后端起不来。
-  # python -m uvicorn: 强制用 venv 的解释器和 uvicorn 模块, 防止 PATH 里
-  # 其他 Python(如 /usr/local/bin/uvicorn) 抢先, 导致用错误版本启动后端。
-  uv run --no-sync python -m uvicorn app.main:app ${UVICORN_ENV_ARGS[@]+"${UVICORN_ENV_ARGS[@]}"} --reload \
+  "${BACKEND_CMD[@]}" --reload \
     --host "$BACKEND_HOST" --port "$BACKEND_PORT" 2>&1 \
     | prefix_awk "$(printf "${BLUE}[backend ]${NC} ")"
 ) &
@@ -188,7 +233,7 @@ PIDS+=("$!")
 (
   cd "$FRONTEND_DIR"
   BACKEND_HOST="$BACKEND_HOST" BACKEND_PORT="$BACKEND_PORT" \
-    pnpm dev --host "$BACKEND_HOST" --port "$FRONTEND_PORT" 2>&1 \
+    "${FRONTEND_CMD[@]}" --host "$BACKEND_HOST" --port "$FRONTEND_PORT" 2>&1 \
     | prefix_awk "$(printf "${GREEN}[frontend]${NC} ")"
 ) &
 PIDS+=("$!")
