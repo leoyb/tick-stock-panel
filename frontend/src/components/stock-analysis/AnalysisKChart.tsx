@@ -2,7 +2,7 @@ import { useEffect, useRef, useMemo, useState } from 'react'
 import { chartTheme, getTheme, useTheme } from '@/lib/theme'
 import * as echarts from 'echarts'
 import type { ECharts, EChartsOption } from 'echarts'
-import type { KlineRow, LevelSeries } from '@/lib/api'
+import type { KlineRow, LevelSeries, TrendOverlay } from '@/lib/api'
 
 /**
  * 个股分析专用日 K 图表。
@@ -82,12 +82,16 @@ export interface ChartMarker {
   label?: string
   color?: string
   above?: boolean
+  kind?: 'buy' | 'sell' | 'neutral'
 }
 export interface ChartRange {
   start: string
   end: string
   label?: string
   color?: string
+  /** Optional price band for structure zones such as Chanlun centers. */
+  low?: number
+  high?: number
 }
 
 interface Props {
@@ -101,6 +105,8 @@ interface Props {
   defaultLevelTypes?: LevelType[]
   /** 预留:新闻/暴雷/利好日期标记 */
   markers?: ChartMarker[]
+  /** 趋势分析输出的画线,仅覆盖其明确提供的日期窗口 */
+  trendOverlays?: TrendOverlay[]
   /** 预留:事件区间高亮 */
   ranges?: ChartRange[]
   /** 预留:点击某根 K 线 */
@@ -118,6 +124,7 @@ export function AnalysisKChart({
   seriesDates,
   defaultLevelTypes = ['sr', 'pivot', 'keltner_s'],
   markers,
+  trendOverlays,
   ranges,
   onDateClick,
   height = 460,
@@ -206,21 +213,47 @@ export function AnalysisKChart({
     // 预留:markPoint(新闻标记)
     const markPointData: any[] = (markers ?? [])
       .filter(m => dateIndex.has(m.date))
-      .map(m => ({
-        coord: [m.date, rows[dateIndex.get(m.date)!].high],
-        symbol: 'pin', symbolSize: 32,
-        itemStyle: { color: m.color ?? '#EAB308' },
-        label: { show: !!m.label, formatter: m.label ?? '', fontSize: 9, color: '#fff' },
-      }))
+      .map(m => {
+        const row = rows[dateIndex.get(m.date)!]
+        if (m.kind === 'buy' || m.kind === 'sell') {
+          const isBuy = m.kind === 'buy'
+          return {
+            coord: [m.date, isBuy ? row.low : row.high],
+            symbol: 'arrow', symbolSize: 14, symbolRotate: isBuy ? 0 : 180,
+            symbolOffset: isBuy ? [0, '60%'] : [0, '-60%'],
+            itemStyle: { color: m.color ?? (isBuy ? '#C74040' : '#2D9B65') },
+            label: {
+              show: !!m.label, formatter: m.label ?? '',
+              position: isBuy ? 'bottom' : 'top', distance: 8,
+              color: m.color ?? (isBuy ? '#C74040' : '#2D9B65'), fontSize: 10,
+              fontFamily: 'JetBrains Mono, monospace',
+            },
+          }
+        }
+        return {
+          coord: [m.date, row.high],
+          symbol: 'pin', symbolSize: 32,
+          itemStyle: { color: m.color ?? '#EAB308' },
+          label: { show: !!m.label, formatter: m.label ?? '', fontSize: 9, color: '#fff' },
+        }
+      })
 
     // 预留:markArea(事件区间)
     const markAreaData: any[] = (ranges ?? [])
       .filter(r => dateIndex.has(r.start) && dateIndex.has(r.end))
-      .map(r => [{
-        xAxis: r.start, name: r.label ?? '',
-        itemStyle: { color: r.color ?? 'rgba(234,179,8,0.08)' },
-        label: r.label ? { show: true, position: 'insideTop', distance: 6, color: '#EAB308', fontSize: 10 } : undefined,
-      }, { xAxis: r.end }])
+      .map(r => {
+        const hasPriceBand = r.low != null && r.high != null
+        return [{
+          xAxis: r.start,
+          ...(hasPriceBand ? { yAxis: r.high } : {}),
+          name: r.label ?? '',
+          itemStyle: { color: r.color ?? 'rgba(234,179,8,0.08)' },
+          label: r.label ? { show: true, position: 'insideTop', distance: 6, color: '#A78BFA', fontSize: 10 } : undefined,
+        }, {
+          xAxis: r.end,
+          ...(hasPriceBand ? { yAxis: r.low } : {}),
+        }]
+      })
 
     const series: any[] = [
       {
@@ -309,6 +342,29 @@ export function AnalysisKChart({
       })
     }
 
+    // 趋势分析线只绘制后端明确返回的日期,不把缺失日期插值成伪数据。
+    for (const overlay of trendOverlays ?? []) {
+      const values = new Map(overlay.points.map(point => [point.date.slice(0, 10), point.value]))
+      const data = dates.map(date => values.get(date) ?? '-')
+      if (!data.some(value => value !== '-')) continue
+      const lastPoint = overlay.points[overlay.points.length - 1]
+      const isTrendLine = overlay.overlay_type === 'trend_line'
+      const color = isTrendLine
+        ? '#FACC15'
+        : overlay.overlay_type === 'chanlun_segment' ? '#F472B6' : '#A78BFA'
+      series.push({
+        name: overlay.label, type: 'line', data, smooth: false, symbol: 'none',
+        silent: true, animation: false, z: 3,
+        lineStyle: { width: isTrendLine ? 2 : 1.5, color, type: isTrendLine ? 'solid' : 'dashed', opacity: 0.95 },
+        itemStyle: { color },
+        endLabel: isTrendLine && lastPoint ? {
+          show: true, formatter: () => overlay.label,
+          color, fontSize: 9, fontFamily: 'JetBrains Mono, monospace',
+          backgroundColor: CT().infoBarBg, padding: [2, 5], borderRadius: 2, distance: 6,
+        } : undefined,
+      })
+    }
+
     // 填充 seriesIndex → levelKey 映射(K/成交量索引 0/1 不参与联动)
     const keyMap = new Map<number, string>()
     // series[0]=K线, series[1]=成交量, 之后是按 priceLines + CURVE_DEFS 顺序 push 的
@@ -391,7 +447,7 @@ export function AnalysisKChart({
     }
     chartInstRef.current.setOption(buildOption(), true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, levels, series, seriesDates, activeTypes, pivotRank, markers, ranges, height, theme, hoveredKey])
+  }, [rows, levels, series, seriesDates, activeTypes, pivotRank, markers, ranges, trendOverlays, height, theme, hoveredKey])
 
   // resize
   useEffect(() => {

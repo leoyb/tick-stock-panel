@@ -6,9 +6,9 @@ import { EmptyState } from '@/components/EmptyState'
 import { StockFinancialSearch } from '@/components/financials/StockFinancialSearch'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { LastStockChip } from '@/components/LastStockChip'
-import { AnalysisKChart, type PriceLevel, type LevelType } from '@/components/stock-analysis/AnalysisKChart'
+import { AnalysisKChart, type ChartRange, type PriceLevel, type LevelType } from '@/components/stock-analysis/AnalysisKChart'
 import { PriceAlertDialog } from '@/components/stock-analysis/PriceAlertDialog'
-import { api } from '@/lib/api'
+import { api, type ChanlunCenter, type TrendAnalysisResult, type TrendSignal } from '@/lib/api'
 import { useLastStock } from '@/lib/useLastStock'
 import { QK } from '@/lib/queryKeys'
 import { toast } from '@/components/Toast'
@@ -81,7 +81,7 @@ export function StockAnalysis() {
     <>
       <PageHeader
         title="个股分析"
-        subtitle="日 K · 关键价位 · AI 四维分析(技术 / 基本面 / 财务 / 消息面)"
+        subtitle={<span className="hidden sm:inline">日 K · 关键价位 · AI 四维分析(技术 / 基本面 / 财务 / 消息面)</span>}
         right={
           <div className="flex items-center gap-2">
             <LastStockChip stock={lastStock} onSelect={onSelect} />
@@ -89,10 +89,10 @@ export function StockAnalysis() {
         }
       />
 
-      <div className="w-full px-8 py-6 space-y-6">
+      <div className="w-full space-y-6 px-3 py-4 sm:px-8 sm:py-6">
         {/* 搜索栏 */}
-        <div className="flex items-center gap-3">
-          <div className="w-72">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="w-72 max-w-full">
             <StockFinancialSearch onSelect={onSelect} assetTypes="stock,index" />
           </div>
           {symbol && (
@@ -127,7 +127,7 @@ export function StockAnalysis() {
         </div>
 
         {/* 主体:左侧当前个股看板 + 右侧常驻历史报告 */}
-        <div className="grid grid-cols-[1fr_288px] gap-6 items-start">
+        <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_288px]">
           <div className="min-w-0">
             {!symbol ? (
               <EmptyState
@@ -189,6 +189,13 @@ function StockAnalysisBoard({ symbol }: { symbol: string }) {
     staleTime: 60_000,
   })
 
+  const trendQ = useQuery({
+    queryKey: QK.stockTrend(symbol),
+    queryFn: () => api.stockTrendAnalysis(symbol),
+    enabled: !!symbol,
+    staleTime: 60_000,
+  })
+
   if (kline.isLoading) {
     return <div className="flex items-center justify-center py-20"><Loader2 className="h-5 w-5 animate-spin text-muted" /></div>
   }
@@ -235,16 +242,125 @@ function StockAnalysisBoard({ symbol }: { symbol: string }) {
         </div>
       </div>
       <div className="p-3">
-        <AnalysisKChart
-          rows={rows}
-          levels={levels}
-          series={levelsQ.data?.series}
-          seriesDates={levelsQ.data?.dates}
-          defaultLevelTypes={['sr', 'pivot', 'keltner_s']}
-          height={480}
-        />
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+          <AnalysisKChart
+            rows={rows}
+            levels={levels}
+            series={levelsQ.data?.series}
+            seriesDates={levelsQ.data?.dates}
+            markers={buildTrendMarkers(trendQ.data?.signals)}
+            trendOverlays={trendQ.data?.overlays}
+            ranges={buildChanlunRanges(trendQ.data?.chanlun?.centers)}
+            defaultLevelTypes={['sr', 'pivot', 'keltner_s']}
+            height={480}
+          />
+          <TrendSignalPanel result={trendQ.data} isLoading={trendQ.isLoading} isError={trendQ.isError} />
+        </div>
       </div>
     </div>
+  )
+}
+
+function buildTrendMarkers(signals: TrendSignal[] | undefined) {
+  return (signals ?? []).map(signal => {
+    const isBuy = signal.label === 'bullish' || signal.signal_type === 'breakout_up' || signal.signal_type === 'chanlun_buy'
+    const isSell = signal.label === 'bearish' || signal.signal_type === 'breakdown' || signal.signal_type === 'chanlun_sell'
+    return {
+      date: signal.event_date ?? signal.as_of,
+      kind: isBuy ? 'buy' as const : isSell ? 'sell' as const : 'neutral' as const,
+      label: signal.signal_type === 'trend'
+        ? (isBuy ? '趋势多' : isSell ? '趋势空' : '震荡')
+        : signal.signal_type === 'chanlun_buy' ? '买点观察'
+          : signal.signal_type === 'chanlun_sell' ? '卖点观察'
+            : (isBuy ? '突破' : '跌破'),
+      color: signal.signal_type === 'chanlun_buy' ? '#FACC15'
+        : signal.signal_type === 'chanlun_sell' ? '#38BDF8'
+          : isBuy ? '#FACC15' : isSell ? '#38BDF8' : '#A1A1AA',
+    }
+  })
+}
+
+function buildChanlunRanges(centers: ChanlunCenter[] | undefined): ChartRange[] {
+  return (centers ?? []).map(center => ({
+    start: center.start_date,
+    end: center.end_date,
+    label: '中枢',
+    color: 'rgba(168, 85, 247, 0.12)',
+    low: center.low,
+    high: center.high,
+  }))
+}
+
+function TrendSignalPanel({
+  result, isLoading, isError,
+}: {
+  result: TrendAnalysisResult | undefined
+  isLoading: boolean
+  isError: boolean
+}) {
+  const statusLabel = result?.status === 'ok' ? '完整' : result?.status === 'degraded' ? '已降级' : '不可用'
+  const chanlun = result?.chanlun
+  const displaySignals = result
+    ? [
+        ...result.signals.filter(signal => signal.signal_type === 'trend' || signal.signal_type === 'breakout_up' || signal.signal_type === 'breakdown'),
+        ...result.signals.filter(signal => signal.signal_type === 'chanlun_buy' || signal.signal_type === 'chanlun_sell').slice(-4),
+      ]
+    : []
+  return (
+    <aside data-testid="trend-signal-panel" className="rounded-lg border border-border/50 bg-base/30 p-3">
+      <div className="mb-3 flex items-center justify-between gap-2 border-b border-border/40 pb-2">
+        <span className="text-xs font-medium text-foreground">趋势信号</span>
+        {result && <span className="text-[10px] text-muted">{statusLabel}</span>}
+      </div>
+      {isLoading && <div className="py-6 text-center text-[11px] text-muted">趋势计算中…</div>}
+      {isError && <div className="py-6 text-center text-[11px] text-danger">趋势分析加载失败</div>}
+      {!isLoading && !isError && result && result.signals.length === 0 && (
+        <div className="py-6 text-center text-[11px] text-muted">暂无可用信号</div>
+      )}
+      {chanlun && (
+        <div data-testid="chanlun-summary" className="mb-3 rounded-md border border-violet-400/20 bg-violet-400/5 p-2 text-[10px] text-muted">
+          <div className="mb-1 text-violet-200">缠论结构</div>
+          <div className="grid grid-cols-4 gap-1 font-mono">
+            <span>分型 {chanlun.fractals.length}</span>
+            <span>笔 {chanlun.strokes.length}</span>
+            <span>线段 {chanlun.segments.length}</span>
+            <span>中枢 {chanlun.centers.length}</span>
+          </div>
+        </div>
+      )}
+      {!isLoading && !isError && result && displaySignals.length > 0 && (
+        <div className="space-y-2">
+          {displaySignals.map(signal => {
+            const isBuy = signal.label === 'bullish' || signal.signal_type === 'breakout_up' || signal.signal_type === 'chanlun_buy'
+            const isSell = signal.label === 'bearish' || signal.signal_type === 'breakdown' || signal.signal_type === 'chanlun_sell'
+            return (
+              <div key={`${signal.signal_type}-${signal.event_date ?? signal.as_of}`} data-testid="trend-signal" className="rounded-md border border-border/40 bg-elevated/30 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className={`text-xs font-medium ${isBuy ? 'text-bull' : isSell ? 'text-bear' : 'text-secondary'}`}>
+                    {signal.signal_type === 'trend' ? '趋势'
+                      : signal.signal_type === 'breakout_up' ? '向上突破'
+                        : signal.signal_type === 'breakdown' ? '向下跌破'
+                          : signal.signal_type === 'chanlun_buy' ? '买点观察' : '卖点观察'}
+                  </span>
+                  <span className="font-mono text-[10px] text-muted">{Math.round(signal.confidence * 100)}%</span>
+                </div>
+                <div className="mt-1 text-[10px] text-muted">
+                  {signal.event_date && signal.event_date !== signal.as_of ? `${signal.event_date} · 确认 ${signal.as_of}` : signal.as_of}
+                  {' · '}{signal.reason_codes.join(', ')}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {result && (
+        <div className="mt-3 space-y-1 border-t border-border/40 pt-2 text-[10px] text-muted">
+          <div>数据截止 {result.data_as_of ?? '—'}</div>
+          <div>算法 {result.algorithm_version}</div>
+          {result.limitations.length > 0 && <div className="text-amber-300/80">{result.limitations[0]}</div>}
+        </div>
+      )}
+    </aside>
   )
 }
 
@@ -253,7 +369,7 @@ function HistorySidebar() {
   const { reports, loaded } = useHistoryReports()
 
   return (
-    <aside className="self-start sticky top-0">
+    <aside className="self-start xl:sticky xl:top-0">
       <div className="rounded-card border border-border/60 bg-surface/40 overflow-hidden">
         <div className="px-3 py-2.5 border-b border-border/40 flex items-center gap-2">
           <HistoryIcon className="h-3.5 w-3.5 text-sky-400 shrink-0" />

@@ -37,6 +37,7 @@ from app.api import (
     signals,
     stock_analysis,
     strategy,
+    trend_analysis,
     watchlist,
 )
 from app.api import auth as auth_api
@@ -486,6 +487,7 @@ app.include_router(data.router)
 app.include_router(ext_data.router)
 app.include_router(financials.router)
 app.include_router(stock_analysis.router)
+app.include_router(trend_analysis.router)
 app.include_router(market_recap.router)
 app.include_router(settings_api.router)
 app.include_router(strategy.router)
