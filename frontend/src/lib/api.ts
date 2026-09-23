@@ -232,6 +232,99 @@ export interface StockLevels {
   series?: LevelSeries
 }
 
+export type TrendStatus = 'ok' | 'degraded' | 'not_available' | 'error'
+
+export interface TrendSignal {
+  signal_type: 'trend' | 'breakout_up' | 'breakdown' | 'chanlun_buy' | 'chanlun_sell'
+  label: string
+  confidence: number
+  reason_codes: string[]
+  as_of: string
+  /** K 线上的事件日期; as_of 是该点被确认、可见的日期。 */
+  event_date?: string | null
+  window_start: string
+  window_end: string
+}
+
+export interface TrendOverlay {
+  overlay_type: 'trend_line' | 'chanlun_stroke' | 'chanlun_segment'
+  label: string
+  points: { date: string; value: number }[]
+}
+
+export interface ChanlunFractal {
+  kind: 'top' | 'bottom'
+  index: number
+  date: string
+  price: number
+  confirmed_index: number
+  confirmed_date: string
+}
+
+export interface ChanlunStroke {
+  start_index: number
+  end_index: number
+  start_date: string
+  end_date: string
+  direction: 'up' | 'down'
+  start_price: number
+  end_price: number
+  high: number
+  low: number
+  start_fractal: 'top' | 'bottom'
+  end_fractal: 'top' | 'bottom'
+}
+
+export interface ChanlunSegment {
+  start_index: number
+  end_index: number
+  start_date: string
+  end_date: string
+  direction: 'up' | 'down'
+  start_price: number
+  end_price: number
+  high: number
+  low: number
+  stroke_start_index: number
+  stroke_end_index: number
+}
+
+export interface ChanlunCenter {
+  start_index: number
+  end_index: number
+  start_date: string
+  end_date: string
+  low: number
+  high: number
+  stroke_start_index: number
+  stroke_end_index: number
+}
+
+export interface ChanlunAnalysis {
+  fractals: ChanlunFractal[]
+  strokes: ChanlunStroke[]
+  segments: ChanlunSegment[]
+  centers: ChanlunCenter[]
+  observations: TrendSignal[]
+}
+
+export interface TrendAnalysisResult {
+  status: TrendStatus
+  algorithm_version: string
+  data_as_of: string | null
+  symbol: string
+  market: string
+  interval: string
+  price_basis: 'adjusted' | 'raw'
+  signals: TrendSignal[]
+  overlays: TrendOverlay[]
+  structures: Record<string, unknown>[]
+  chanlun?: ChanlunAnalysis
+  summary: string
+  limitations: string[]
+  provenance: Record<string, unknown>[]
+}
+
 export interface AiStockReport {
   id: string
   symbol: string
@@ -598,6 +691,106 @@ export interface RegimeCoverage {
   rows: number
   earliest_date: string | null
   latest_date: string | null
+}
+
+// ===== GSBLBR 六因子研究复刻 =====
+export interface GsblbrRow {
+  date: string
+  score: number
+  cape: number
+  cape_score: number
+  yield_curve: number
+  yield_curve_score: number
+  manufacturing: number
+  manufacturing_score: number
+  private_balance: number
+  private_balance_score: number
+  core_inflation: number
+  core_inflation_score: number
+  unemployment: number
+  unemployment_score: number
+}
+
+export interface GsblbrOfficialPoint {
+  date: string
+  value: number
+}
+
+export interface GsblbrPayload {
+  snapshot_version: number
+  model: string
+  status: 'approximate'
+  start: string
+  end: string
+  updated_at: string
+  latest: GsblbrRow
+  series: GsblbrRow[]
+  official_series: GsblbrOfficialPoint[]
+  total: number
+  methodology: {
+    weights: Record<string, number>
+    percentile: string
+    inverse_risk_factors: string[]
+    sample_starts: Record<string, string>
+    manufacturing_note: string
+    private_balance_note: string
+  }
+  sources: Record<string, { series: string; url: string; publisher: string }>
+}
+
+export interface GsblbrRefreshResult {
+  ok: boolean
+  start: string
+  end: string
+  updated_at: string
+  rows: number
+}
+
+// ===== hanshu123 美股市场聚合数据 =====
+export interface UsMarketPoint {
+  date: string
+  value: number
+}
+
+export interface UsMarketSeries {
+  key: string
+  label: string
+  axis: 'left' | 'right'
+  unit: string
+  points: UsMarketPoint[]
+}
+
+export interface UsMarketPanel {
+  id: string
+  group: 'macro' | 'leading' | 'gsblbr'
+  title: string
+  description: string
+  frequency: string
+  source_url: string
+  start: string | null
+  end: string | null
+  series: UsMarketSeries[]
+}
+
+export interface UsMarketPayload {
+  snapshot_version: number
+  source: string
+  updated_at: string
+  start: string | null
+  end: string | null
+  groups: Array<'macro' | 'leading' | 'gsblbr'>
+  query: { start: string | null; end: string | null }
+  panels: UsMarketPanel[]
+  sources: Array<{ key: string; url: string; publisher: string }>
+  total_panels: number
+}
+
+export interface UsMarketRefreshResult {
+  ok: boolean
+  updated_at: string
+  start: string | null
+  end: string | null
+  panels: number
 }
 
 // ── 市场阶段(情绪周期) 与 主线 ──
@@ -2687,6 +2880,30 @@ export const api = {
   },
   regimeMainlineRecompute: () =>
     request<{ ok: boolean; rows: number }>('/api/regime/mainline/recompute', { method: 'POST' }),
+  gsblbrHistory: (start?: string, end?: string) => {
+    const params = new URLSearchParams()
+    if (start) params.set('start', start)
+    if (end) params.set('end', end)
+    const qs = params.toString()
+    return request<GsblbrPayload>(`/api/gsblbr/history${qs ? `?${qs}` : ''}`)
+  },
+  gsblbrRefresh: () => request<GsblbrRefreshResult>('/api/gsblbr/refresh', { method: 'POST' }),
+  usMarketOverview: (start?: string, end?: string, refresh = false) => {
+    const params = new URLSearchParams()
+    if (start) params.set('start', start)
+    if (end) params.set('end', end)
+    if (refresh) params.set('refresh', 'true')
+    const qs = params.toString()
+    return request<UsMarketPayload>(`/api/us-market/overview${qs ? `?${qs}` : ''}`)
+  },
+  usMarketSeries: (panelId: string, start?: string, end?: string) => {
+    const params = new URLSearchParams()
+    if (start) params.set('start', start)
+    if (end) params.set('end', end)
+    const qs = params.toString()
+    return request<UsMarketPanel>(`/api/us-market/series/${encodeURIComponent(panelId)}${qs ? `?${qs}` : ''}`)
+  },
+  usMarketRefresh: () => request<UsMarketRefreshResult>('/api/us-market/refresh', { method: 'POST' }),
   mainlineFilterUpdate: (payload: { min_members?: number; max_members?: number; blacklist?: string[]; exclude_st?: boolean }) =>
     request<MainlineFilter>('/api/settings/preferences/mainline-filter', {
       method: 'PUT',
@@ -3278,6 +3495,11 @@ export const api = {
   // ===== 个股分析 =====
   stockAnalysisLevels: (symbol: string, days = 120) =>
     request<StockLevels>(`/api/stock-analysis/levels?symbol=${encodeURIComponent(symbol)}&days=${days}`),
+
+  stockTrendAnalysis: (symbol: string, market: 'cn' | 'hk' | 'us' = 'cn') =>
+    request<TrendAnalysisResult>(
+      `/api/analysis/trend/${encodeURIComponent(symbol)}?market=${market}&interval=1d&price_basis=adjusted`,
+    ),
 
   stockAnalysisReportsList: () =>
     request<{ reports: AiStockReport[] }>('/api/stock-analysis/reports'),

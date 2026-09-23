@@ -82,6 +82,7 @@ export const QK = {
                            ['kline', symbol, start, end, extColumns ?? ''] as const,
   klineLatest:          (symbol: string) => ['kline-latest', symbol] as const,
   stockLevels:          (symbol: string, days?: number) => ['stock-levels', symbol, days ?? 120] as const,
+  stockTrend:           (symbol: string, market = 'cn') => ['stock-trend', symbol, market] as const,
   klineMinute:          (symbol: string, date: string) =>
                              ['kline-minute', symbol, date] as const,
   klineMinuteRange:     (symbol: string, days: number) =>
@@ -119,6 +120,9 @@ export const QK = {
   regimeCoverage:       ['regime-coverage'] as const,
   regimePhases:         (start?: string, end?: string) => ['regime-phases', start ?? '', end ?? ''] as const,
   regimeMainline:       (kind: string, start?: string, end?: string) => ['regime-mainline', kind, start ?? '', end ?? ''] as const,
+  // GSBLBR 六因子研究复刻 — 月度时序, 不进 SSE 刷新
+  gsblbrHistory:         (start?: string, end?: string) => ['gsblbr-history', start ?? '', end ?? ''] as const,
+  usMarketOverview:      (start?: string, end?: string) => ['us-market-overview', start ?? '', end ?? ''] as const,
   // 板块切换 (盘中轮动, 全量分钟聚合) — 30s 前端轮询刷新; seriesKey = 自定义展示板块清单,
   // filterKey = 自动活跃榜行数与排除名单 (会改变结果的参数必须进查询键)
   sectorRotation:       (kind: string, flow?: string, bucket?: number, seriesKey?: string, filterKey?: string) => ['sector-rotation', kind, flow ?? '', bucket ?? 5, seriesKey ?? '', filterKey ?? ''] as const,
