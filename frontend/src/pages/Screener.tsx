@@ -29,6 +29,7 @@ import { CompositeStrategyDialog } from '@/components/screener/CompositeStrategy
 import { ListColumnCustomizer } from '@/components/ListColumnCustomizer'
 import { useTableSort } from '@/components/stock-table/useTableSort'
 import { resolveCandleConfig } from '@/lib/list-columns'
+import { useMarket } from '@/lib/market'
 import {
   SCREENER_BUILTIN_COLUMNS,
   SCREENER_COLUMN_GROUPS,
@@ -42,6 +43,7 @@ import {
 const SHOW_STRATEGY_STORE = false
 
 export function Screener() {
+  const { market } = useMarket()
   const [assetType, setAssetType] = useState<'stock' | 'etf'>('stock')
   // 周期显示筛选: 全部 / 日线 / 分钟 — 只过滤卡片显示, 不影响池和执行;
   // 执行按每个策略自己声明的 timeframes 路由 (日线走盘后缓存, 分钟走本地分钟K分区)
@@ -104,6 +106,15 @@ export function Screener() {
   const minuteRunDateRef = useRef<string | null>(null)
   const qc = useQueryClient()
 
+  // 跟随全局市场切换：清除上一市场的结果与日期，防止跨市场串数据。
+  useEffect(() => {
+    setActiveStrategy(null)
+    setResult(null)
+    setShowAll(false)
+    setAsOf('')
+    setHitCounts({})
+  }, [market])
+
   // 结果列配置 — 默认内置列，异步合并后端/localStorage 偏好
   const [columns, setColumns] = useState<ColumnConfig[]>([...SCREENER_BUILTIN_COLUMNS])
   const [customizerOpen, setCustomizerOpen] = useState(false)
@@ -154,8 +165,8 @@ export function Screener() {
 
   // 统一列表: 不按周期过滤, 日线+分钟策略合并返回, 分钟策略带 timeframes 标识
   const strategies = useQuery({
-    queryKey: [...QK.screenerStrategies('all'), 'all'],
-    queryFn: () => api.screenerStrategies(undefined, 'all'),
+    queryKey: [...QK.screenerStrategies('all'), 'all', market],
+    queryFn: () => api.screenerStrategies(undefined, 'all', market),
   })
 
   // 激活策略自身的执行周期 (决定走缓存还是分钟实时跑)。
@@ -170,21 +181,21 @@ export function Screener() {
   // 摘要只覆盖日线缓存; 分钟策略命中数来自手动单跑。
   // run_all 渐进式返回后后台仍在算 → 轮询摘要, 算完的策略逐个点亮。
   const summaryQuery = useQuery({
-    queryKey: QK.screenerCachedSummary,
-    queryFn: api.screenerCachedSummary,
+    queryKey: [...QK.screenerCachedSummary, market],
+    queryFn: () => api.screenerCachedSummary(market),
     enabled: assetType === 'stock',
     refetchInterval: pendingRun ? 2000 : false,
   })
 
   const fullCachedQuery = useQuery({
-    queryKey: QK.screenerCached(asOf, extColumnsParam),
-    queryFn: () => api.screenerCached(extColumnsParam || undefined),
+    queryKey: [...QK.screenerCached(asOf, extColumnsParam), market],
+    queryFn: () => api.screenerCached(extColumnsParam || undefined, market),
     enabled: assetType === 'stock' && tfFilter !== '1m' && showAll,
   })
 
   const singleCachedQuery = useQuery({
-    queryKey: QK.screenerCachedResult(activeStrategy ?? '', asOf, extColumnsParam),
-    queryFn: () => api.screenerCachedResult(activeStrategy!, extColumnsParam || undefined),
+    queryKey: [...QK.screenerCachedResult(activeStrategy ?? '', asOf, extColumnsParam), market],
+    queryFn: () => api.screenerCachedResult(activeStrategy!, extColumnsParam || undefined, market),
     enabled: assetType === 'stock'
       && activeStrategyTimeframe === '1d'
       && !showAll
@@ -280,6 +291,8 @@ export function Screener() {
         date,
         strategyIds ?? dailyPoolIds,
         assetType,
+        '1d',
+        market,
       ),
     onSuccess: (data) => {
       if (data.as_of) setAsOf(data.as_of)
@@ -303,7 +316,7 @@ export function Screener() {
   // 合入 hitCounts 点亮卡片。传空日期让后端用分钟分区自身最新交易日 (与单跑同口径)。
   const runAllMinute = useMutation({
     mutationFn: (strategyIds: string[]) =>
-      api.screenerRunAll(undefined, strategyIds, assetType, '1m'),
+      api.screenerRunAll(undefined, strategyIds, assetType, '1m', market),
     onSuccess: (data) => {
       const counts: Record<string, number> = {}
       for (const [id, item] of Object.entries(data.results)) {
@@ -603,7 +616,7 @@ export function Screener() {
   // 执行周期由策略自身声明决定: 日线走盘后缓存/单跑, 分钟走本地分钟K分区实时跑
   const run = useMutation({
     mutationFn: ({ id, date, timeframe: tf }: { id: string; date: string; timeframe: '1d' | '1m' }) =>
-      api.screenerRunPreset(id, undefined, date || undefined, extColumnsParam || undefined, assetType, tf),
+      api.screenerRunPreset(id, undefined, date || undefined, extColumnsParam || undefined, assetType, tf, market),
     onSuccess: (data, vars) => {
       setResult(data)
       // 同步更新卡片上的命中数
@@ -1226,7 +1239,7 @@ export function Screener() {
             toast('AI 策略已保存为草稿，请在策略池「AI」标签发布后使用', 'success')
             return
           }
-          const data = await qc.fetchQuery({ queryKey: QK.screenerStrategies('all'), queryFn: () => api.screenerStrategies(), staleTime: 0 })
+          const data = await qc.fetchQuery({ queryKey: [...QK.screenerStrategies('all'), 'all', market], queryFn: () => api.screenerStrategies(undefined, 'all', market), staleTime: 0 })
           if (!data.presets.some(s => s.id === id)) {
             throw new Error(`策略 ${id} 已保存但未加载，请检查策略代码`)
           }
@@ -1243,7 +1256,7 @@ export function Screener() {
         open={showComposite}
         onClose={() => setShowComposite(false)}
         onSavedId={async id => {
-          const data = await qc.fetchQuery({ queryKey: QK.screenerStrategies('all'), queryFn: () => api.screenerStrategies(), staleTime: 0 })
+          const data = await qc.fetchQuery({ queryKey: [...QK.screenerStrategies('all'), 'all', market], queryFn: () => api.screenerStrategies(undefined, 'all', market), staleTime: 0 })
           addToPool(id)
           // 新建叠加策略为日线时立即扫描, 免去手动点刷新 (分钟策略仍手动单跑)
           const preset = data.presets.find(s => s.id === id)

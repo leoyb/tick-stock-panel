@@ -69,6 +69,7 @@ import { toggleTheme, useTheme } from '@/lib/theme'
 import { setCurrentTotal as setAlertTotal, useUnreadAlerts } from '@/lib/monitorBadge'
 import { ExtensionSlot } from '@/extensions/ExtensionSlot'
 import { getFrontendExtensionNavigation } from '@/extensions/registry'
+import { useMarket } from '@/lib/market'
 
 // 品牌色 — 只用于 logo / brand 区域,不影响功能语义色
 const BRAND = '#8B5CF6'
@@ -134,6 +135,28 @@ function indexPctClass(v: number | null | undefined) {
   const n = Number(v)
   if (n === 0) return 'text-foreground'
   return n > 0 ? 'text-bull' : 'text-bear'
+}
+
+/** 全局市场切换器（多市场扩展）：A股 / 港股 / 美股 */
+function MarketSwitcher() {
+  const { market, setMarket } = useMarket()
+  const opts: [('cn' | 'hk' | 'us'), string][] = [
+    ['cn', 'A股'], ['hk', '港股'], ['us', '美股'],
+  ]
+  return (
+    <div className="mt-2.5 flex items-center h-7 rounded-btn border border-border overflow-hidden">
+      {opts.map(([m, label]) => (
+        <button
+          key={m}
+          onClick={() => setMarket(m)}
+          className={`h-full flex-1 px-1.5 text-[11px] font-medium transition-colors cursor-pointer
+            ${market === m ? 'bg-accent/10 text-accent' : 'text-muted hover:text-foreground hover:bg-elevated'}`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 /** 监控中心未读徽标 — 仅在非监控页且有未读时显示。 */
@@ -733,6 +756,9 @@ export function Layout() {
                 configured={settingsState?.ai_configured ?? settingsState?.has_ai_key}
                 model={settingsState?.ai_model}
               />
+              {/* 全局市场切换（多市场扩展）：A股 / 港股 / 美股 */}
+              <div className="mx-2 border-t border-border/45" aria-hidden="true" />
+              <MarketSwitcher />
             </div>
           )}
         </div>

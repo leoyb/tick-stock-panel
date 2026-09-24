@@ -21,6 +21,7 @@ import {
 } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { useChartTheme } from '@/lib/theme'
+import { useMarket } from '@/lib/market'
 import { toast } from '@/components/Toast'
 import { Modal } from '@/components/Modal'
 import { cn } from '@/lib/cn'
@@ -138,6 +139,9 @@ const cardCls = 'rounded-card border border-border bg-surface/80 shadow-[0_1px_2
 
 // ── 主组件 ────────────────────────────────────────────────
 export function Regime() {
+  const { market } = useMarket()
+  const isCn = market === 'cn'
+
   const qc = useQueryClient()
   const [range, setRange] = useState<RangePreset>('1y')
   // 视图 tab: 市场环境(状态/趋势/日历) 与 情绪周期(阶段/主线) 两组内容同页切换,
@@ -150,8 +154,8 @@ export function Regime() {
 
   // coverage: "全部"模式 + 标题展示依赖
   const coverage = useQuery({
-    queryKey: QK.regimeCoverage,
-    queryFn: () => api.regimeCoverage(),
+    queryKey: [...QK.regimeCoverage, market] as const,
+    queryFn: () => api.regimeCoverage(market),
     staleTime: 5 * 60 * 1000,
   })
 
@@ -160,13 +164,13 @@ export function Regime() {
 
   // queryKey 用 range 的完整三元组区分: limit / start+end(全部) / custom天数
   const history = useQuery({
-    queryKey: ['regime-history', range] as const,
-    queryFn: () => api.regimeHistory(histRange.start, histRange.end, histRange.limit),
+    queryKey: ['regime-history', range, market] as const,
+    queryFn: () => api.regimeHistory(histRange.start, histRange.end, histRange.limit, market),
     staleTime: 5 * 60 * 1000,
   })
   const states = useQuery({
-    queryKey: QK.regimeStates(days),
-    queryFn: () => api.regimeStates(days),
+    queryKey: [...QK.regimeStates(days), market] as const,
+    queryFn: () => api.regimeStates(days, market),
     staleTime: 5 * 60 * 1000,
   })
   // 情绪周期阶段段 + 主线排行(与 history 同一时间范围)
@@ -632,7 +636,7 @@ export function Regime() {
   const handleRecompute = async () => {
     setRecomputing(true)
     try {
-      const r = await api.regimeRecompute()
+      const r = await api.regimeRecompute(undefined, undefined, market)
       toast(r.computed > 0 ? `重算完成 · 新增 ${r.computed} 天` : '重算完成 · 数据已是最新', 'success')
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['regime-history'] }),
@@ -661,7 +665,7 @@ export function Regime() {
         <div className="absolute left-0 top-0 h-full w-1 bg-gradient-to-b from-accent to-accent/20" />
         <div className="flex items-center gap-3">
           <Activity className="h-5 w-5 text-accent" />
-          <h1 className="text-base font-semibold text-foreground">市场环境</h1>
+          <h1 className="text-base font-semibold text-foreground">{isCn ? '市场环境' : `${market === 'hk' ? '港股' : '美股'} · 市场环境`}</h1>
           <span className="text-xs text-muted">
             {view === 'phase' ? '涨停情绪 · 市场阶段 · 主线脉络' : '每日环境状态 · 赚钱效应 · 趋势分析'}
           </span>

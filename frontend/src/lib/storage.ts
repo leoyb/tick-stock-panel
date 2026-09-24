@@ -171,4 +171,6 @@ export const storage = {
   dataCardVisible: kv<Record<string, boolean>>('data-card-visible'),
   /** 数据页画像卡片顺序 (卡片key 数组, 长度=卡片总数) */
   dataCardOrder: kv<string[]>('data-card-order'),
+  /** 全局市场（多市场扩展）：cn | hk | us */
+  globalMarket: kv<'cn' | 'hk' | 'us'>('tf-global-market'),
 } as const

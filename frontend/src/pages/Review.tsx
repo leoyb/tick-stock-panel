@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   BookOpenCheck, RefreshCw, Sparkles, Trash2, History, ChevronRight, AlertTriangle,
   Database, Wand2, Copy, Download, Clock, X, Check, Trophy, ChevronDown, ChevronUp,
+  FileText, Loader2,
 } from 'lucide-react'
 
 import { api, type OverviewMarket, type AiReviewReport, type DragonTigerStockItem } from '@/lib/api'
@@ -27,6 +28,7 @@ import { MarkdownRenderer } from '@/components/financials/MarkdownRenderer'
 import { toast } from '@/components/Toast'
 import { usePreferences } from '@/lib/useSharedQueries'
 import { useReviewState } from '@/lib/useReviewStore'
+import { useMarket } from '@/lib/market'
 import {
   startReviewGeneration, resetReview, isReviewGenerating,
   type ReviewPhase,
@@ -70,6 +72,9 @@ function fmtArchivedAt(iso: string): string {
 // Phase 类型复用 store 的定义(单一来源)
 
 export function Review() {
+  const { market } = useMarket()
+  const isCn = market === 'cn'
+
   const qc = useQueryClient()
   // 复盘日期:当前固定取最新交易日(后续如需日期选择可改回 useState)
   const asOf: string | undefined = undefined
@@ -79,24 +84,40 @@ export function Review() {
   const [viewing, setViewing] = useState<AiReviewReport | null>(null)  // 查看历史报告
   const reportEndRef = useRef<HTMLDivElement>(null)
 
+  // 无 AI 兜底(仅港美股): GET /api/market-recap/market-data 纯模板复盘,
+  // 不依赖 AI 接口。AI 复盘失败时用户可一键切换到这里。
+  const [dataRecap, setDataRecap] = useState<{ as_of: string | null; content: string } | null>(null)
+  const [dataRecapLoading, setDataRecapLoading] = useState(false)
+  const loadDataRecap = useCallback(async () => {
+    if (isCn || dataRecapLoading) return
+    setDataRecapLoading(true)
+    try {
+      const res = await api.marketRecapData(market as 'hk' | 'us')
+      setDataRecap(res.content ? { as_of: res.as_of, content: res.content } : null)
+    } catch { /* request() 已 toast */ }
+    finally { setDataRecapLoading(false) }
+  }, [isCn, market, dataRecapLoading])
+  // 切市场后旧的兜底复盘不再适用, 丢弃
+  useEffect(() => { setDataRecap(null) }, [market])
+
   // 看板数据(与总览页同源)
   const marketQuery = useQuery<OverviewMarket>({
-    queryKey: QK.overviewMarket(asOf),
-    queryFn: () => api.overviewMarket(asOf),
+    queryKey: QK.overviewMarket(asOf, market),
+    queryFn: () => api.overviewMarket(asOf, market),
     staleTime: 5_000,
     placeholderData: (prev) => prev,
   })
 
   // 历史报告
   const historyQuery = useQuery<{ reports: AiReviewReport[] }>({
-    queryKey: QK.reviewReports,
-    queryFn: () => api.reviewReportsList(),
+    queryKey: [...QK.reviewReports, market] as const,
+    queryFn: () => api.reviewReportsList(market),
   })
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => api.reviewReportDelete(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.reviewReports })
+      qc.invalidateQueries({ queryKey: [...QK.reviewReports, market] })
       toast('已删除', 'success')
     },
     onError: () => { /* request() 已 toast */ },
@@ -188,24 +209,26 @@ export function Review() {
         summary: doneMeta?.summary,
         emotion_score: doneMeta?.emotion_score ?? null,
         emotion_label: doneMeta?.emotion_label ?? '',
+        market,
       })
-      qc.invalidateQueries({ queryKey: QK.reviewReports })
+      qc.invalidateQueries({ queryKey: [...QK.reviewReports, market] })
     } catch { /* 静默 */ }
-  }, [focus, asOf, marketQuery.data, qc])
+  }, [focus, asOf, marketQuery.data, qc, market])
 
   // 主流程:生成复盘(委托给全局 store,流在后台独立运行)
   const generate = useCallback(() => {
     if (isReviewGenerating()) return
     setViewing(null)
+    setDataRecap(null)  // 新生成替换掉兜底的数据版复盘
     resetReview()
     startReviewGeneration(asOf, focus, (full, doneMeta) => {
       onGenerationDone(full, doneMeta).catch(() => { /* 静默 */ })
-    })
-  }, [asOf, focus, onGenerationDone])
+    }, market)
+  }, [asOf, focus, onGenerationDone, market])
 
-  // 复制全文到剪贴板(viewing 优先,与主区域显示一致)
+  // 复制全文到剪贴板(viewing 优先,与主区域显示一致; 兜底数据版复盘可复制)
   const copyContent = useCallback(async () => {
-    const text = viewing?.content ?? content
+    const text = viewing?.content ?? dataRecap?.content ?? content
     if (!text) return
     try {
       await navigator.clipboard.writeText(text)
@@ -213,13 +236,13 @@ export function Review() {
     } catch {
       toast('复制失败,请手动选择文本', 'error')
     }
-  }, [content, viewing])
+  }, [content, viewing, dataRecap])
 
   // 下载为 .md 文件(viewing 优先)
   const downloadContent = useCallback(() => {
-    const text = viewing?.content ?? content
+    const text = viewing?.content ?? dataRecap?.content ?? content
     if (!text) return
-    const reportDate = viewing?.as_of ?? meta?.as_of ?? asOf ?? new Date().toISOString().slice(0, 10)
+    const reportDate = viewing?.as_of ?? dataRecap?.as_of ?? meta?.as_of ?? asOf ?? new Date().toISOString().slice(0, 10)
     const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -227,7 +250,7 @@ export function Review() {
     a.download = `复盘_${reportDate}.md`
     a.click()
     URL.revokeObjectURL(url)
-  }, [content, viewing, meta, asOf])
+  }, [content, viewing, dataRecap, meta, asOf])
 
   // 查看历史报告(不中断后台生成:仅临时把 viewing 覆盖到主区域,
   // 生成中的流仍在 store 里继续跑,点"生成中"项即可切回)
@@ -243,12 +266,13 @@ export function Review() {
   const data = marketQuery.data
   // 主区域显示的内容:viewing(查看历史)优先于 store 的生成 content,
   // 这样点历史报告不会覆盖后台生成中的流。
-  const displayContent = viewing?.content ?? content
+  const displayContent = viewing?.content ?? dataRecap?.content ?? content
+  const displayPhase: ReviewPhase = dataRecap && !viewing ? 'done' : phase
 
   return (
     <>
       <PageHeader
-        title="AI 复盘"
+        title={isCn ? 'AI 复盘' : `${market === 'hk' ? '港股' : '美股'} · AI 复盘`}
         titleExtra={<Sparkles className="h-4 w-4 text-accent" />}
         subtitle={`${displayDate}${data?.emotion ? ` · 情绪 ${data.emotion.label}` : ''}`}
         right={
@@ -328,7 +352,7 @@ export function Review() {
 
 
               {/* ===== 龙虎榜 (fuyao 专有, 资金动向上下文; 复盘日联动) ===== */}
-              <DragonTigerCard date={dtDate} onOpenStock={setPreviewSymbol} />
+              {isCn && <DragonTigerCard date={dtDate} onOpenStock={setPreviewSymbol} />}
 
               {/* ===== 关注点输入 ===== */}
               <div className="flex items-center gap-2 rounded-card border border-border bg-surface/80 px-3.5 py-2.5 transition-colors focus-within:border-accent/40">
@@ -348,7 +372,7 @@ export function Review() {
               {/* ===== 报告 + 历史 双栏(报告为主体)===== */}
               <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_18rem]">
                 <ReportPanel
-                  phase={phase}
+                  phase={displayPhase}
                   content={displayContent}
                   error={error}
                   isGenerating={isGenerating}
@@ -356,6 +380,9 @@ export function Review() {
                   onCopy={copyContent}
                   onDownload={downloadContent}
                   onRegenerate={generate}
+                  onDataRecap={loadDataRecap}
+                  showDataRecap={!isCn}
+                  dataRecapLoading={dataRecapLoading}
                   reportEndRef={reportEndRef}
                 />
                 <HistoryPanel
@@ -716,7 +743,7 @@ function MarketSummaryBar({ data }: { data: OverviewMarket }) {
 // 报告面板(流式 + 错误 + 历史/完成态)
 // ================================================================
 function ReportPanel({
-  phase, content, error, isGenerating, viewing, onCopy, onDownload, onRegenerate, reportEndRef,
+  phase, content, error, isGenerating, viewing, onCopy, onDownload, onRegenerate, onDataRecap, showDataRecap, dataRecapLoading, reportEndRef,
 }: {
   phase: ReviewPhase
   content: string
@@ -726,6 +753,9 @@ function ReportPanel({
   onCopy: () => void
   onDownload: () => void
   onRegenerate: () => void
+  onDataRecap?: () => void
+  showDataRecap?: boolean
+  dataRecapLoading?: boolean
   reportEndRef: React.RefObject<HTMLDivElement>
 }) {
   if (phase === 'error') {
@@ -736,12 +766,24 @@ function ReportPanel({
         </div>
         <div className="text-sm font-medium text-foreground">复盘失败</div>
         <div className="max-w-md text-center text-xs text-secondary">{error || '请检查 AI 配置后重试'}</div>
-        <button
-          onClick={onRegenerate}
-          className="mt-1 inline-flex items-center gap-1.5 rounded-btn bg-accent/15 px-3 py-1.5 text-xs text-accent transition-colors hover:bg-accent/20"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />重新生成
-        </button>
+        <div className="flex items-center gap-2 mt-1">
+          <button
+            onClick={onRegenerate}
+            className="inline-flex items-center gap-1.5 rounded-btn bg-accent/15 px-3 py-1.5 text-xs text-accent transition-colors hover:bg-accent/20"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />重新生成
+          </button>
+          {showDataRecap && (
+            <button
+              onClick={onDataRecap}
+              disabled={dataRecapLoading}
+              className="inline-flex items-center gap-1.5 rounded-btn bg-elevated px-3 py-1.5 text-xs text-secondary hover:text-foreground transition-colors disabled:opacity-50"
+            >
+              {dataRecapLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+              {dataRecapLoading ? '生成中…' : '改用数据版复盘（无需 AI）'}
+            </button>
+          )}
+        </div>
       </div>
     )
   }
@@ -783,6 +825,16 @@ function ReportPanel({
           <Sparkles className="h-3 w-3 text-accent" />
           点击右上角「生成复盘」开始
         </div>
+        {showDataRecap && (
+          <button
+            onClick={onDataRecap}
+            disabled={dataRecapLoading}
+            className="inline-flex items-center gap-1.5 rounded-btn border border-border px-3.5 py-1.5 text-xs text-secondary hover:text-foreground hover:bg-elevated transition-colors disabled:opacity-50"
+          >
+            {dataRecapLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+            {dataRecapLoading ? '生成中…' : '改用数据版复盘（无需 AI）'}
+          </button>
+        )}
       </div>
     )
   }

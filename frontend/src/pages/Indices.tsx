@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, Loader2, Lock, RefreshCw } from 'lucide-react'
+import { useMarket } from '@/lib/market'
 import { api, type IndexInstrument, type KlineRow, type MinuteKlineRow } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { useCapabilities } from '@/lib/useSharedQueries'
@@ -61,7 +62,26 @@ const PINNED_INDEXES = [
   { symbol: '000680.SH', name: '科创综指' },
 ]
 
+// 港美股置顶指数（多市场扩展）
+const MARKET_PINNED: Record<'hk' | 'us', { symbol: string; name: string }[]> = {
+  hk: [
+    { symbol: 'HSI', name: '恒生指数' },
+    { symbol: 'HSTECH', name: '恒生科技指数' },
+    { symbol: 'HSCEI', name: '恒生国企指数' },
+    { symbol: 'HSCCI', name: '红筹指数' },
+  ],
+  us: [
+    { symbol: 'SPX', name: '标普500' },
+    { symbol: 'IXIC', name: '纳斯达克' },
+    { symbol: 'DJI', name: '道琼斯' },
+    { symbol: 'NDX', name: '纳斯达克100' },
+  ],
+}
+
 export function Indices() {
+  const { market } = useMarket()
+  const isCn = market === 'cn'
+
   const qc = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const symbolParam = searchParams.get('symbol') ?? ''
@@ -70,14 +90,16 @@ export function Indices() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [linkedPrice, setLinkedPrice] = useState<number | null>(null)
 
-  // 分时数据依赖分钟K批量数据 (kline.minute.batch)
+  // 分时数据依赖分钟K批量数据 (kline.minute.batch)；港美股免费源无分时
   const caps = useCapabilities()
-  const hasMinuteCap = !!caps.data?.capabilities?.['kline.minute.batch']
+  const hasMinuteCap = isCn && !!caps.data?.capabilities?.['kline.minute.batch']
 
-  // 指数标的固定核心四只 (产品契约, 不再提供全指数搜索/浏览)
-  const topRows: IndexInstrument[] = PINNED_INDEXES.map(p => ({
-    symbol: p.symbol, name: p.name, asset_type: 'index' as const,
-  }))
+  const topRows: IndexInstrument[] = useMemo(() => {
+    const pinned = isCn ? PINNED_INDEXES : MARKET_PINNED[market as 'hk' | 'us']
+    return pinned.map(p => ({
+      symbol: p.symbol, name: p.name, asset_type: 'index' as const,
+    }))
+  }, [market, isCn])
 
   const selectedSymbol = selected || topRows[0]?.symbol || ''
 
@@ -91,26 +113,30 @@ export function Indices() {
   }
 
   const quotes = useQuery({
-    queryKey: QK.indexQuotes,
-    queryFn: () => api.indexQuotes(),
+    queryKey: [...QK.indexQuotes, market] as const,
+    queryFn: () => isCn ? api.indexQuotes() : api.indicesMarketQuotes(market as 'hk' | 'us'),
     placeholderData: (prev) => prev,
   })
 
   const daily = useQuery({
-    queryKey: QK.indexDaily(selectedSymbol, range.start, range.end),
-    queryFn: () => api.indexDaily(selectedSymbol, 180, range),
+    queryKey: [...QK.indexDaily(selectedSymbol, range.start, range.end), market] as const,
+    queryFn: () => (isCn
+      ? api.indexDaily(selectedSymbol, 180, range)
+      : api.indicesMarketDaily(market as 'hk' | 'us', selectedSymbol, 180)) as any,
     enabled: !!selectedSymbol,
     placeholderData: (prev) => prev,
   })
 
   const minute = useQuery({
-    queryKey: QK.indexMinute(selectedSymbol, selectedDate ?? ''),
-    queryFn: () => api.indexMinute(selectedSymbol, selectedDate ?? undefined),
+    queryKey: [...QK.indexMinute(selectedSymbol, selectedDate ?? ''), market] as const,
+    queryFn: () => (isCn
+      ? api.indexMinute(selectedSymbol, selectedDate ?? undefined)
+      : api.indicesMarketMinute(market as 'hk' | 'us', selectedSymbol)) as any,
     enabled: !!selectedSymbol && !!selectedDate && hasMinuteCap,
   })
 
   const syncDaily = useMutation({
-    mutationFn: () => api.syncIndexDaily(365),
+    mutationFn: () => (isCn ? api.syncIndexDaily(365) : api.indicesMarketSync(market as 'hk' | 'us')) as any,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.indexQuotes })
       qc.invalidateQueries({ queryKey: ['index-daily'] })

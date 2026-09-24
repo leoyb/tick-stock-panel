@@ -25,6 +25,7 @@ import { useCustomSignalNames } from '@/lib/useCustomSignalNames'
 import { SignalPicker } from '@/components/screener/SignalPicker'
 import { startBacktest, stopBacktest, tryReconnect, useBacktestTask } from '@/lib/backtestTask'
 import { useDataStatus, useCapabilities } from '@/lib/useSharedQueries'
+import { useMarket } from '@/lib/market'
 import { EmptyState } from '@/components/EmptyState'
 import { WarmupBadge } from '@/components/WarmupBadge'
 import { DatePicker } from '@/components/DatePicker'
@@ -944,6 +945,7 @@ export function StrategyBacktest({ loadCandidate, onLoadConsumed }: {
   const [strategyGroup, setStrategyGroup] = useState<StrategyGroup>('all')
   const [symbols, setSymbols] = useState(saved?.symbols ?? '')
   const [assetType, setAssetType] = useState<'stock' | 'etf'>(saved?.assetType ?? 'stock')
+  const { market } = useMarket()
   const [start, setStart] = useState(saved?.start ?? THREE_MONTHS_AGO)
   const [end, setEnd] = useState(saved?.end ?? TODAY)
   // 成交口径: 建仓/清仓可独立配置。向后兼容老 matching (派生为 entry=exit=matching)。
@@ -1052,8 +1054,8 @@ export function StrategyBacktest({ loadCandidate, onLoadConsumed }: {
   const loadedStrategyRef = useRef<string | null>(null)
 
   const strategies = useQuery({
-    queryKey: QK.screenerStrategies(assetType, 'all'),
-    queryFn: () => api.screenerStrategies(assetType, 'all'),
+    queryKey: [...QK.screenerStrategies(assetType, 'all'), market],
+    queryFn: () => api.screenerStrategies(assetType, 'all', market),
   })
   const strategyList = useMemo(() => strategies.data?.presets ?? [], [strategies.data])
   const filteredStrategyList = useMemo(() => (
@@ -1199,6 +1201,7 @@ export function StrategyBacktest({ loadCandidate, onLoadConsumed }: {
     startBacktest({
       strategy_id: selectedStrategy,
       asset_type: assetType,
+      market,
       symbols: symbols ? symbols.split(',').map(s => s.trim()).filter(Boolean) : null,
       start: start || null,
       end: end || undefined,
@@ -2826,7 +2829,10 @@ export function StrategyBacktest({ loadCandidate, onLoadConsumed }: {
                         </button>
                       ))}
                     </div>
-                    <span className="text-[11px] text-muted/70">ETF 仅技术类策略,读 ETF enriched</span>
+                    <span className="text-[11px] text-muted">市场：{market === 'cn' ? 'A股' : market === 'hk' ? '港股' : '美股'}（跟随侧边栏全局切换器）</span>
+                    <span className="text-[11px] text-muted/70">
+                      {market === 'cn' ? 'ETF 仅技术类策略,读 ETF enriched' : '港美股无涨跌停/连板,费率按市场'}
+                    </span>
                   </div>
                   <StockPoolPicker value={symbols} onChange={setSymbols} assetType={assetType} />
                   <div className="text-[11px] leading-5 text-muted">默认全市场回测，由基础过滤、策略条件和买卖触发器筛选；需要单票调试或自选池回测时再限定股票池。</div>

@@ -108,6 +108,16 @@ export function Data() {
     },
   })
 
+  // 港美股同步（多市场扩展）：走 /api/pipeline/run-market，与 A 股同步共用活跃任务槽
+  const startMarketSync = useMutation({
+    mutationFn: (market: 'hk' | 'us') => api.pipelineRunMarket(market),
+    onSuccess: ({ job_id }) => {
+      setActiveJobId(job_id)
+      startTime.current = Date.now()
+    },
+  })
+  const isMarketStarting = startMarketSync.isPending
+
   // 停止同步: 二次确认后调 cancel 端点 (协作式终止, 当前分块完成后线程自行退出)
   const [showStopConfirm, setShowStopConfirm] = useState(false)
   const stopSync = useMutation({
@@ -618,6 +628,25 @@ export function Data() {
                 停止
               </button>
             )}
+            {/* 港美股同步（多市场扩展） */}
+            <button
+              onClick={() => startMarketSync.mutate('hk')}
+              disabled={isMarketStarting || isStarting || isRunning}
+              title="同步全量港股日K + 指标（免费模式约 10 分钟）"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-btn border border-border text-secondary hover:text-accent hover:border-accent/30 text-xs font-medium disabled:opacity-40 transition-all duration-150"
+            >
+              {isMarketStarting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              港股同步
+            </button>
+            <button
+              onClick={() => startMarketSync.mutate('us')}
+              disabled={isMarketStarting || isStarting || isRunning}
+              title="同步全量美股日K + 指标（免费模式约 30-40 分钟）"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-btn border border-border text-secondary hover:text-accent hover:border-accent/30 text-xs font-medium disabled:opacity-40 transition-all duration-150"
+            >
+              {isMarketStarting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              美股同步
+            </button>
             <button
               onClick={() => setOpenSettings('pipeline-scope')}
               className="inline-flex items-center gap-1 px-2 py-1 rounded-btn text-secondary hover:text-accent hover:bg-accent/8 text-xs transition-colors duration-150"

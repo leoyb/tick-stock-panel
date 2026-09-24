@@ -18,7 +18,7 @@ export const QK = {
   capabilityMatrix: ['capability-matrix'] as const,
   quoteStatus:    ['quote-status'] as const,
   quoteInterval:  ['quote-interval'] as const,
-  overviewMarket: (asOf?: string) => ['overview-market', asOf ?? 'latest'] as const,
+  overviewMarket: (asOf?: string, market?: string) => ['overview-market', asOf ?? 'latest', market ?? 'cn'] as const,
   indexQuotes:    ['index-quotes'] as const,
 
   // Watchlist
@@ -42,13 +42,13 @@ export const QK = {
 
   // Screener
   screener:             ['screener'] as const,
-  screenerStrategies:   (assetType: string = 'stock', timeframe: '1d' | '1m' | 'all' = '1d') => ['screener-strategies', assetType, timeframe] as const,
+  screenerStrategies:   (assetType: string = 'stock', timeframe: '1d' | '1m' | 'all' = '1d', market: string = 'cn') => ['screener-strategies', assetType, timeframe, market] as const,
   screenerCachedSummary: ['screener-cached', 'summary'] as const,
-  screenerCachedResult: (strategyId: string, asOf?: string, ext?: string) => ['screener-cached', 'strategy', strategyId, asOf ?? '', ext ?? ''] as const,
-  screenerCached:       (asOf?: string, ext?: string) => ['screener-cached', 'all', asOf ?? '', ext ?? ''] as const,
+  screenerCachedResult: (strategyId: string, asOf?: string, ext?: string, market: string = 'cn') => ['screener-cached', 'strategy', strategyId, asOf ?? '', ext ?? '', market] as const,
+  screenerCached:       (asOf?: string, ext?: string, market: string = 'cn') => ['screener-cached', 'all', asOf ?? '', ext ?? '', market] as const,
   screenerKlineBatch:   (symbols: string) => ['screener-kline-batch', symbols] as const,
   marketSnapshot:       ['market-snapshot'] as const,
-  limitLadder:          (asOf?: string) => ['limit-ladder', asOf] as const,
+  limitLadder:          (asOf?: string, market: string = 'cn') => ['limit-ladder', asOf ?? '', market] as const,
 
   // Backtest
   backtestStatus:       ['backtest-status'] as const,
@@ -114,9 +114,9 @@ export const QK = {
   rpsRotation:          (days: number) => ['rps-rotation', days] as const,
 
   // 市场环境(Regime) — 日级离线计算, 不进 SSE 刷新
-  regimeHistory:        (limit?: number) => ['regime-history', limit ?? 0] as const,
+  regimeHistory:        (limit?: number, market?: string) => ['regime-history', limit ?? 0, market ?? 'cn'] as const,
   regimeLatest:         ['regime-latest'] as const,
-  regimeStates:         (days: number) => ['regime-states', days] as const,
+  regimeStates:         (days: number, market?: string) => ['regime-states', days, market ?? 'cn'] as const,
   regimeCoverage:       ['regime-coverage'] as const,
   regimePhases:         (start?: string, end?: string) => ['regime-phases', start ?? '', end ?? ''] as const,
   regimeMainline:       (kind: string, start?: string, end?: string) => ['regime-mainline', kind, start ?? '', end ?? ''] as const,

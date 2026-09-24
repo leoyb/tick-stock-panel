@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { RouterProvider } from 'react-router-dom'
 import { QueryClient, QueryClientProvider, QueryCache } from '@tanstack/react-query'
+import { MarketProvider } from './lib/market'
 import { initializeFrontendExtensions } from './extensions/bootstrap'
 import './index.css'
 
@@ -48,7 +49,9 @@ async function bootstrap() {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
+        <MarketProvider>
+          <RouterProvider router={router} />
+        </MarketProvider>
       </QueryClientProvider>
     </React.StrictMode>,
   )
