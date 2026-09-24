@@ -103,6 +103,8 @@ interface Props {
   seriesDates?: string[]
   /** 默认开启的价位组 */
   defaultLevelTypes?: LevelType[]
+  showChanlun: boolean
+  onToggleChanlun: () => void
   /** 预留:新闻/暴雷/利好日期标记 */
   markers?: ChartMarker[]
   /** 趋势分析输出的画线,仅覆盖其明确提供的日期窗口 */
@@ -123,6 +125,8 @@ export function AnalysisKChart({
   series,
   seriesDates,
   defaultLevelTypes = ['sr', 'pivot', 'keltner_s'],
+  showChanlun,
+  onToggleChanlun,
   markers,
   trendOverlays,
   ranges,
@@ -473,6 +477,18 @@ export function AnalysisKChart({
       {levels && (
         <div className="flex flex-wrap items-center gap-1.5 mb-2">
           <span className="text-[10px] text-muted mr-1">关键价位</span>
+          <button
+            type="button"
+            aria-pressed={showChanlun}
+            onClick={onToggleChanlun}
+            title="显示或隐藏缠论结构与买卖观察"
+            className={`inline-flex items-center gap-1 h-6 px-2 rounded-md text-[10px] font-medium border transition-all ${showChanlun
+              ? 'text-foreground border-violet-400/40 bg-violet-400/15'
+              : 'text-muted bg-base/40 border-border/30 hover:border-border/60'}`}
+          >
+            <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: showChanlun ? '#A78BFA' : '#52525B' }} />
+            缠论
+          </button>
           {LEVEL_GROUPS.map(g => {
             const active = activeTypes.has(g.key)
             // 枢轴点数量按当前档位过滤显示;其他组显示原始数量

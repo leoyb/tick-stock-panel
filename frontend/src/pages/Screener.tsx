@@ -205,11 +205,16 @@ export function Screener() {
 
   const dataStatus = useDataStatus({ staleTime: 0 })
 
-  // 默认日期 = enriched 最新日期（始终跟随最新）
+  // 默认日期 = enriched 最新日期（A股跟随本地 enriched，港美股跟随该市场最新数据）
   useEffect(() => {
-    const latest = dataStatus.data?.enriched?.latest_date
-    if (latest) setAsOf(latest)
-  }, [dataStatus.data?.enriched?.latest_date])
+    if (market === 'cn') {
+      const latest = dataStatus.data?.enriched?.latest_date
+      if (latest) setAsOf(latest)
+    } else {
+      const mLatest = summaryQuery.data?.as_of
+      setAsOf(mLatest || '')
+    }
+  }, [dataStatus.data?.enriched?.latest_date, summaryQuery.data?.as_of, market])
 
   const strategyPresets = useMemo(
     () => (strategies.data?.presets ?? []).filter(s => s.asset_types.includes(assetType)),

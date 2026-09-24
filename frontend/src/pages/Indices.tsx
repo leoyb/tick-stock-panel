@@ -103,6 +103,15 @@ export function Indices() {
 
   const selectedSymbol = selected || topRows[0]?.symbol || ''
 
+  // 市场切换时重置选中标的为新市场的首选指数
+  useEffect(() => {
+    const pinned = isCn ? PINNED_INDEXES : MARKET_PINNED[market as 'hk' | 'us']
+    const first = pinned[0]?.symbol || ''
+    setSelected(first)
+    setSelectedDate(null)
+    setSearchParams({ symbol: first })
+  }, [market])
+
   useEffect(() => {
     if (symbolParam && symbolParam !== selected) setSelected(symbolParam)
   }, [selected, symbolParam])

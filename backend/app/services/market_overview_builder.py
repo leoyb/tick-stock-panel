@@ -703,10 +703,46 @@ def build_market_overview_market(
     emotion_label = ("强势" if emotion_score >= 70 else "偏暖" if emotion_score >= 55
                      else "震荡" if emotion_score >= 45 else "偏冷" if emotion_score >= 30 else "冰点")
 
+    # 指数行情计算 (港美股对齐展示主要指数)
+    indices = []
+    try:
+        from app.services import index_sync_market
+        from pathlib import Path
+        daily_dir = Path(repo.store.data_dir) / f"kline_index_daily_{market}"
+        if daily_dir.exists():
+            for item in index_sync_market.list_market_indices(market)[:4]:
+                sym = item["symbol"]
+                lf = pl.scan_parquet((daily_dir / "date=*" / "*.parquet").as_posix())
+                idx_df = lf.filter(pl.col("symbol") == sym).sort("date", descending=True).head(2).collect()
+                if idx_df.height >= 2:
+                    prev = float(idx_df["close"][-1])
+                    cur = float(idx_df["close"][0])
+                    pct = ((cur / prev - 1) * 100) if prev else 0.0
+                    indices.append({
+                        "symbol": sym,
+                        "name": item.get("name", sym),
+                        "last_price": cur,
+                        "close": cur,
+                        "change_pct": pct,
+                        "change_amount": cur - prev,
+                    })
+                elif idx_df.height == 1:
+                    cur = float(idx_df["close"][0])
+                    indices.append({
+                        "symbol": sym,
+                        "name": item.get("name", sym),
+                        "last_price": cur,
+                        "close": cur,
+                        "change_pct": 0.0,
+                        "change_amount": 0.0,
+                    })
+    except Exception as e:
+        logger.warning("market %s overview indices failed: %s", market, e)
+
     return _json_safe({
         "as_of": str(as_of),
         "quote_status": {"enabled": False, "is_trading_hours": False},
-        "indices": [],
+        "indices": indices,
         "breadth": {
             "total": total, "up": up, "down": down, "flat": flat,
             "up_pct": up_pct, "down_pct": down_pct, "avg_pct": avg_pct,

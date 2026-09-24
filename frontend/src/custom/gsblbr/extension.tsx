@@ -16,7 +16,7 @@ const FACTORS = [
   { key: 'cape_score', label: '估值 · CAPE', raw: 'cape', unit: '倍', color: '#ef4444' },
   { key: 'yield_curve_score', label: '收益率曲线 · 10Y−3M', raw: 'yield_curve', unit: '%', color: '#8b5cf6' },
   { key: 'manufacturing_score', label: '制造业活动代理 · IPMAN', raw: 'manufacturing', unit: '', color: '#0ea5e9' },
-  { key: 'private_balance_score', label: '私人部门余额', raw: 'private_balance', unit: '% GDP', color: '#f59e0b' },
+  { key: 'private_balance_score', label: '私人部门余额代理', raw: 'private_balance', unit: '% GDP', color: '#f59e0b' },
   { key: 'core_inflation_score', label: '核心 CPI 同比', raw: 'core_inflation', unit: '%', color: '#ec4899' },
   { key: 'unemployment_score', label: '失业率', raw: 'unemployment', unit: '%', color: '#14b8a6' },
 ] as const
@@ -102,7 +102,7 @@ function RiskPage() {
       itemStyle: { color: factor.color },
     }))
     const officialLine = {
-      name: '高盛原版（公开）',
+      name: '第三方公开对照值',
       type: 'line' as const,
       data: officialSeries.map(point => [point.date, point.value]),
       showSymbol: false,
@@ -127,11 +127,11 @@ function RiskPage() {
           const rawDate = entries[0]?.value?.[0]
           const date = typeof rawDate === 'number' ? new Date(rawDate).toISOString().slice(0, 10) : String(rawDate ?? '')
           const row = rows.find(item => item.date.slice(0, 7) === date.slice(0, 7))
-          const officialValue = entries.find(item => item.seriesName === '高盛原版（公开）')?.value?.[1]
+          const officialValue = entries.find(item => item.seriesName === '第三方公开对照值')?.value?.[1]
           if (!row && officialValue == null) return date
           return [
             `<strong>${date}</strong>`,
-            officialValue == null ? '' : `<span style="color:#38bdf8">●</span> 高盛原版：<b>${officialValue.toFixed(2)}</b>`,
+            officialValue == null ? '' : `<span style="color:#38bdf8">●</span> 公开对照值：<b>${officialValue.toFixed(2)}</b>`,
             row == null ? '' : `<span style="color:#f97316">●</span> 复刻综合分：<b>${row.score.toFixed(2)}</b>`,
             ...(row == null ? [] : FACTORS.map(factor => `<span style="color:${factor.color}">●</span> ${factor.label}：${row[factor.key].toFixed(2)}`)),
           ].filter(Boolean).join('<br/>')
@@ -200,7 +200,7 @@ function RiskPage() {
       <div className="space-y-4 overflow-auto p-5">
         <div className="rounded-card border border-warning/30 bg-warning/5 px-4 py-3 text-xs leading-relaxed text-secondary">
           <div className="flex items-center gap-2 font-medium text-foreground"><Info className="h-3.5 w-3.5 text-warning" />口径说明</div>
-          <p className="mt-1.5">文章只公开了计算思路，未公开高盛完整公式。当前实现复刻六项等权百分位；制造业用 IPMAN 工业生产代理替代 PMI，私人部门用 (GPSAVE−GPDI)/GDP 四季度均值并后移两个月。因此曲线用于研究对照，不应标记为官方 GSBLBR。</p>
+          <p className="mt-1.5">高盛未公开完整公式。复刻值使用 Shiller 官方 CAPE 与 FRED 单项数据计算六项等权分位；制造业用 IPMAN 代替 ISM PMI，私人部门余额用 (GPSAVE−GPDI)/GDP 四季度均值，按第二次 GDP 估计公布月份入列，随后沿用最近值。历史数据采用当前修订值，不是当时可得的 vintage，不能用于无未来信息的回测。蓝线来自第三方公开对照数据，并非已核验的高盛授权序列。</p>
         </div>
 
         {data.isLoading && <div className="grid min-h-64 place-items-center text-sm text-muted"><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在加载宏观数据…</div>}
@@ -241,7 +241,7 @@ function RiskPage() {
               </div>
               <div ref={chartRef} className="h-[420px] w-full min-w-0" />
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted">
-                {officialSeries.length > 0 && <span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-sky-400" />高盛原版（公开日度）</span>}
+                {officialSeries.length > 0 && <span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-sky-400" />第三方公开对照值（日度）</span>}
                 <span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-warning" />综合分</span>
                 {FACTORS.map(factor => <span key={factor.key}><i className="mr-1 inline-block h-2 w-2 rounded-full" style={{ backgroundColor: factor.color }} />{factor.label}</span>)}
               </div>
@@ -256,7 +256,7 @@ function RiskPage() {
                   </a>
                 ))}
               </div>
-              <p className="mt-3 text-[10px] leading-relaxed text-muted">复刻覆盖 {data.data?.start} 至 {data.data?.end}，共 {data.data?.total} 个月；高盛原版公开值覆盖 {officialSeries[0]?.date ?? '暂无'} 至 {officialSeries[officialSeries.length - 1]?.date ?? '暂无'}。原版后续日期因数据集公开遮罩没有值，不做补值。最后刷新：{data.data?.updated_at}。</p>
+              <p className="mt-3 text-[10px] leading-relaxed text-muted">复刻覆盖 {data.data?.start} 至 {data.data?.end}，共 {data.data?.total} 个月；第三方公开对照值覆盖 {officialSeries[0]?.date ?? '暂无'} 至 {officialSeries[officialSeries.length - 1]?.date ?? '暂无'}。后续日期因数据集公开遮罩没有值，不做补值。最后刷新：{data.data?.updated_at}。</p>
             </div>
           </>
         )}

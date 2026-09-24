@@ -82,7 +82,7 @@ export const CORE_INDEXES = [
   { symbol: '000680.SH', name: '科创综指' },
 ] as const
 
-type CoreIndex = (typeof CORE_INDEXES)[number]
+export type CoreIndex = (typeof CORE_INDEXES)[number]
 
 const nav = [
   { to: '/',                label: '看板',     icon: LayoutDashboard },
@@ -174,7 +174,7 @@ function MonitorBadge({ active }: { active: boolean }) {
   )
 }
 
-function SidebarIndexQuotes({ rows, items }: { rows: IndexQuote[] | undefined; items: readonly CoreIndex[] }) {
+function SidebarIndexQuotes({ rows, items }: { rows: IndexQuote[] | undefined; items: readonly { symbol: string; name: string }[] }) {
   if (items.length === 0) return null
   const quoteBySymbol = new Map((rows ?? []).map(q => [q.symbol, q]))
   return (
@@ -494,13 +494,45 @@ export function Layout() {
   const toggleNavCollapsed = () => {
     setNavStatePersist(navState === 'expanded' ? 'rail' : navState === 'rail' ? 'hidden' : 'expanded')
   }
-  // 指数条: 固定核心四只 (产品契约, 不再可配置), 常驻显示
-  const sidebarIndexes = CORE_INDEXES
+  const { market } = useMarket()
+  // 指数条: 按当前选中的市场动态切换核心四只指数
+  const sidebarIndexes = useMemo(() => {
+    if (market === 'hk') {
+      return [
+        { symbol: 'HSI', name: '恒生指数' },
+        { symbol: 'HSTECH', name: '恒生科技' },
+        { symbol: 'HSCEI', name: '恒生国企' },
+        { symbol: 'HSCCI', name: '红筹指数' },
+      ]
+    }
+    if (market === 'us') {
+      return [
+        { symbol: 'SPX', name: '标普500' },
+        { symbol: 'IXIC', name: '纳斯达克' },
+        { symbol: 'DJI', name: '道琼斯' },
+        { symbol: 'NDX', name: '纳指100' },
+      ]
+    }
+    return CORE_INDEXES
+  }, [market])
+
   const { data: sidebarIndexQuotes } = useQuery({
-    queryKey: [...QK.indexQuotes, 'sidebar', 'core'] as const,
-    queryFn: () => api.indexQuotes(sidebarIndexes.map(p => p.symbol)),
+    queryKey: [...QK.indexQuotes, 'sidebar', market] as const,
+    queryFn: () => (market === 'cn'
+      ? api.indexQuotes(sidebarIndexes.map(p => p.symbol))
+      : api.indicesMarketQuotes(market as 'hk' | 'us').then(res => ({
+          rows: res.rows.map(r => ({
+            symbol: r.symbol,
+            name: r.name,
+            last_price: r.last_price,
+            close: r.close,
+            change_pct: (r.change_pct ?? 0) * 100,
+          })) as IndexQuote[],
+          count: res.rows.length,
+        }))
+    ),
     enabled: sidebarIndexes.length > 0,
-    placeholderData: (prev) => prev,
+    placeholderData: (prev: any) => prev,
   })
 
   // SSE: 行情更新时自动刷新相关 queries + 告警通知

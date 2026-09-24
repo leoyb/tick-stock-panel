@@ -175,6 +175,7 @@ export function StockAnalysis() {
 
 // ===== 分析看板:日 K + 关键价位 =====
 function StockAnalysisBoard({ symbol }: { symbol: string }) {
+  const [showChanlun, setShowChanlun] = useState(false)
   const kline = useQuery({
     queryKey: ['kline', symbol, ''],
     queryFn: () => api.klineDaily(symbol, 250),
@@ -248,21 +249,23 @@ function StockAnalysisBoard({ symbol }: { symbol: string }) {
             levels={levels}
             series={levelsQ.data?.series}
             seriesDates={levelsQ.data?.dates}
-            markers={buildTrendMarkers(trendQ.data?.signals)}
-            trendOverlays={trendQ.data?.overlays}
-            ranges={buildChanlunRanges(trendQ.data?.chanlun?.centers)}
+            showChanlun={showChanlun}
+            onToggleChanlun={() => setShowChanlun(value => !value)}
+            markers={buildTrendMarkers(trendQ.data?.signals, showChanlun)}
+            trendOverlays={trendQ.data?.overlays.filter(overlay => showChanlun || overlay.overlay_type === 'trend_line')}
+            ranges={showChanlun ? buildChanlunRanges(trendQ.data?.chanlun?.centers) : []}
             defaultLevelTypes={['sr', 'pivot', 'keltner_s']}
             height={480}
           />
-          <TrendSignalPanel result={trendQ.data} isLoading={trendQ.isLoading} isError={trendQ.isError} />
+          <TrendSignalPanel result={trendQ.data} isLoading={trendQ.isLoading} isError={trendQ.isError} showChanlun={showChanlun} />
         </div>
       </div>
     </div>
   )
 }
 
-function buildTrendMarkers(signals: TrendSignal[] | undefined) {
-  return (signals ?? []).map(signal => {
+function buildTrendMarkers(signals: TrendSignal[] | undefined, showChanlun: boolean) {
+  return (signals ?? []).filter(signal => showChanlun || !signal.signal_type.startsWith('chanlun_')).map(signal => {
     const isBuy = signal.label === 'bullish' || signal.signal_type === 'breakout_up' || signal.signal_type === 'chanlun_buy'
     const isSell = signal.label === 'bearish' || signal.signal_type === 'breakdown' || signal.signal_type === 'chanlun_sell'
     return {
@@ -292,18 +295,19 @@ function buildChanlunRanges(centers: ChanlunCenter[] | undefined): ChartRange[] 
 }
 
 function TrendSignalPanel({
-  result, isLoading, isError,
+  result, isLoading, isError, showChanlun,
 }: {
   result: TrendAnalysisResult | undefined
   isLoading: boolean
   isError: boolean
+  showChanlun: boolean
 }) {
   const statusLabel = result?.status === 'ok' ? '完整' : result?.status === 'degraded' ? '已降级' : '不可用'
   const chanlun = result?.chanlun
   const displaySignals = result
     ? [
         ...result.signals.filter(signal => signal.signal_type === 'trend' || signal.signal_type === 'breakout_up' || signal.signal_type === 'breakdown'),
-        ...result.signals.filter(signal => signal.signal_type === 'chanlun_buy' || signal.signal_type === 'chanlun_sell').slice(-4),
+        ...(showChanlun ? result.signals.filter(signal => signal.signal_type === 'chanlun_buy' || signal.signal_type === 'chanlun_sell').slice(-4) : []),
       ]
     : []
   return (
@@ -317,7 +321,7 @@ function TrendSignalPanel({
       {!isLoading && !isError && result && result.signals.length === 0 && (
         <div className="py-6 text-center text-[11px] text-muted">暂无可用信号</div>
       )}
-      {chanlun && (
+      {showChanlun && chanlun && (
         <div data-testid="chanlun-summary" className="mb-3 rounded-md border border-violet-400/20 bg-violet-400/5 p-2 text-[10px] text-muted">
           <div className="mb-1 text-violet-200">缠论结构</div>
           <div className="grid grid-cols-4 gap-1 font-mono">

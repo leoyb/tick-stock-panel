@@ -16,10 +16,13 @@ import math
 import threading
 from collections.abc import Callable, Mapping
 from datetime import date
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urljoin, urlsplit
 
 import httpx
+import polars as pl
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.extensions import BACKEND_EXTENSION_API_VERSION, BackendExtensionRegistrar
@@ -30,11 +33,11 @@ EXTENSION_ID = "research.gsblbr"
 EXTENSION_API_VERSION = BACKEND_EXTENSION_API_VERSION
 
 _DATA_FILE = "gsblbr-replica.json"
-_SHILLER_URL = "https://posix4e.github.io/shiller_wrapper_data/data/stock_market_data.json"
+_SHILLER_URL = "https://shillerdata.com/"
 _OFFICIAL_URL = "https://hanshu123.com/assets/gsblbr-v1-data.json?v=20260828-private-mask-v1"
 _FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={}"
 _USER_AGENT = "tickflow-stock-panel/research-gsblbr"
-_SNAPSHOT_VERSION = 2
+_SNAPSHOT_VERSION = 3
 
 _FACTOR_ORDER = (
     "cape",
@@ -125,11 +128,11 @@ def build_private_balance_series(
     investment: Mapping[str, Any],
     gdp: Mapping[str, Any],
 ) -> dict[str, float]:
-    """Build (gross private saving - investment) / GDP, 4Q mean, +2 months.
+    """Build (gross private saving - investment) / GDP, 4Q mean.
 
-    The +2-month shift represents the publication lag used by the article's
-    approximation.  The calculation requires the three BEA/FRED series to
-    share the same quarterly observation.
+    A quarter's three BEA inputs are first usable in the month of the GDP
+    second estimate (four months after the quarter's first month). This is
+    an availability approximation, not a historical release-vintage record.
     """
     quarterly: list[tuple[str, float]] = []
     for key in sorted(set(saving) & set(investment) & set(gdp)):
@@ -143,7 +146,7 @@ def build_private_balance_series(
     result: dict[str, float] = {}
     for index in range(3, len(quarterly)):
         average = sum(value for _, value in quarterly[index - 3 : index + 1]) / 4
-        result[_add_months(quarterly[index][0], 2)] = round(average, 6)
+        result[_add_months(quarterly[index][0], 4)] = round(average, 6)
     return result
 
 
@@ -221,10 +224,14 @@ def compute_gsblbr_series(
     return rows
 
 
-def _fetch_text(url: str) -> str:
+def _fetch_bytes(url: str) -> bytes:
     response = httpx.get(url, headers={"User-Agent": _USER_AGENT}, timeout=30, follow_redirects=True)
     response.raise_for_status()
-    return response.content.decode("utf-8-sig")
+    return response.content
+
+
+def _fetch_text(url: str) -> str:
+    return _fetch_bytes(url).decode("utf-8-sig")
 
 
 def _fetch_json(url: str) -> Any:
@@ -241,21 +248,56 @@ def _parse_fred_csv(body: str, series_id: str) -> dict[str, float]:
     return result
 
 
-def _parse_shiller_cape(payload: Any) -> dict[str, float]:
-    rows = payload.get("data", []) if isinstance(payload, dict) else []
+class _ShillerLinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.url: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "a":
+            return
+        href = dict(attrs).get("href")
+        if href and urlsplit(href).path.endswith("/ie_data.xls"):
+            self.url = href
+
+
+def _shiller_workbook_url(html: str) -> str:
+    parser = _ShillerLinkParser()
+    parser.feed(html)
+    if not parser.url:
+        raise ValueError("Shiller workbook link unavailable")
+    url = urljoin(_SHILLER_URL, parser.url)
+    if urlsplit(url).scheme != "https":
+        raise ValueError("Shiller workbook URL must use HTTPS")
+    return url
+
+
+def _parse_shiller_cape(workbook: bytes) -> dict[str, float]:
+    try:
+        frame = pl.read_excel(
+            io.BytesIO(workbook),
+            sheet_name="Data",
+            columns=["Date", "CAPE"],
+            read_options={"header_row": 7},
+            schema_overrides={"CAPE": pl.String},
+        )
+    except Exception as exc:
+        raise ValueError("invalid Shiller workbook") from exc
     result: dict[str, float] = {}
-    for row in rows:
-        if not isinstance(row, dict):
+    for raw_date, raw_cape in frame.iter_rows():
+        numeric_date = _finite(raw_date)
+        value = _finite(raw_cape)
+        if numeric_date is None or value is None:
             continue
-        value = _finite(row.get("cape"))
-        observation_date = row.get("date_string")
-        if value is not None and observation_date:
-            result[_month_key(str(observation_date))] = value
+        year = int(numeric_date)
+        month = round((numeric_date - year) * 100)
+        if 1 <= month <= 12:
+            result[f"{year:04d}-{month:02d}-01"] = value
     return result
 
 
 def _parse_official_series(payload: Any) -> list[dict[str, float | str]]:
-    """Extract the public daily Goldman-original field ``o`` from the site JSON."""
+    """Extract the third-party public comparison field ``o`` from the site JSON."""
     source_rows = payload.get("series", []) if isinstance(payload, dict) else []
     result: list[dict[str, float | str]] = []
     for row in source_rows:
@@ -272,13 +314,14 @@ def build_snapshot(
     *,
     fetch_text: Callable[[str], str] = _fetch_text,
     fetch_json: Callable[[str], Any] = _fetch_json,
+    fetch_bytes: Callable[[str], bytes] = _fetch_bytes,
 ) -> dict[str, Any]:
     """Fetch public sources once and return a serialisable replica payload."""
     fred: dict[str, dict[str, float]] = {}
     for name, series_id in FRED_SOURCES.items():
         fred[name] = _parse_fred_csv(fetch_text(_FRED_URL.format(series_id)), series_id)
 
-    cape = _parse_shiller_cape(fetch_json(_SHILLER_URL))
+    cape = _parse_shiller_cape(fetch_bytes(_shiller_workbook_url(fetch_text(_SHILLER_URL))))
     official_series = _parse_official_series(fetch_json(_OFFICIAL_URL))
     yield_curve = {
         key: fred["yield_long"][key] - fred["yield_short"][key]
@@ -295,6 +338,13 @@ def build_snapshot(
         investment=fred["private_investment"],
         gdp=fred["gdp"],
     )
+    monthly_end = min(
+        max(cape), max(yield_curve), max(fred["manufacturing"]),
+        max(core_inflation), max(fred["unemployment"]),
+    )
+    private_balance = {key: value for key, value in private_balance.items() if key <= monthly_end}
+    if private_balance and max(private_balance) < monthly_end:
+        private_balance[monthly_end] = private_balance[max(private_balance)]
     rows = compute_gsblbr_series(
         cape=cape,
         yield_curve=yield_curve,
@@ -322,13 +372,13 @@ def build_snapshot(
             "inverse_risk_factors": sorted(_INVERSE_FACTORS),
             "sample_starts": _SAMPLE_STARTS,
             "manufacturing_note": "IPMAN manufacturing industrial production proxy; not ISM PMI",
-            "private_balance_note": "(GPSAVE - GPDI) / GDP, four-quarter mean, shifted +2 months",
+            "private_balance_note": "(GPSAVE - GPDI) / GDP, four-quarter mean; first available in second-estimate month, then carried forward",
         },
         "sources": {
             "cape": {
                 "series": "Shiller CAPE",
                 "url": _SHILLER_URL,
-                "publisher": "Robert Shiller / Yale Economics mirror",
+                "publisher": "Robert Shiller",
             },
             "yield_curve": {
                 "series": "GS10 - TB3MS",
@@ -356,7 +406,7 @@ def build_snapshot(
                 "publisher": "U.S. Bureau of Labor Statistics via FRED",
             },
             "official": {
-                "series": "GSBLBR original public field o",
+                "series": "GSBLBR public comparison field o",
                 "url": _OFFICIAL_URL,
                 "publisher": "hanshu123.com public comparison dataset",
             },
